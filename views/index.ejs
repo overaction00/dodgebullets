@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>JShooting</title>
+    <link rel='stylesheet' href='/stylesheets/style.css' />
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+
+      function vector(s, t) {
+        var x = t.left - s.left;
+        var y = t.top - s.top;
+        var arctan = Math.atan2(x, y);
+        return { left: Math.sin(arctan), top: Math.cos(arctan)};
+      }
+      function distance(o1, o2) {
+        var o1CenterY = (o1.offsetTop + (o1.offsetHeight/2));;
+        var o1CenterX = (o1.offsetLeft + (o1.offsetWidth/2));
+        var o2CenterY = (o2.offsetTop + (o2.offsetHeight/2));
+        var o2CenterX = (o2.offsetLeft + (o2.offsetWidth/2));
+        var distance = Math.sqrt(Math.pow(o2CenterY - o1CenterY, 2) + Math.pow(o2CenterX - o1CenterX, 2));
+        return distance;
+      }
+      var Hero = function (container, data, id) {
+        this.id = data.id;
+        this.color = data.color;
+        this.direction = data.direction;
+        var speed = 0.2;
+
+        var dom = document.createElement('img');
+        dom.className = 'user';
+        if (id && id === "me") {
+          dom.id = "me";
+          //dom.src = '/images/fighter.png';
+        } else {
+          //dom.src = '/images/enemy2.gif';
+        }
+        container.appendChild(dom);
+        dom.style.left = data.x + 'px';
+        dom.style.top = data.y + 'px';
+        //dom.style.backgroundColor = this.color;
+        //dom.style.border = 'solid 1px ' + this.color;
+        dom.style.backgroundImage = "url('/images/fighter.png')";
+
+        dom.style.display = "none";
+        dom.width = 20;
+        dom.height = 20;
+        this.dom = dom;
+
+        this.setDirection = function(code) {
+          this.direction[code - 37] = true;
+        };
+        this.releaseDirection = function(code) {
+          this.direction[code - 37] = false;
+        };
+
+        this.move = function(time) {
+          var left = dom.offsetLeft;
+          var top = dom.offsetTop;
+          if (this.direction[0] && left > -1) {
+            left -= (speed * time);
+          }
+          if (this.direction[1] && top > -1) {
+            top -= (speed * time);
+          }
+          if (this.direction[2] && left + dom.offsetWidth < container.offsetWidth) {
+            left += (speed * time);
+          }
+          if (this.direction[3] && top + dom.offsetHeight < container.offsetHeight) {
+            top += (speed * time);
+          }
+          this.setDomLocation(left, top);
+        };
+        this.setDomLocation = function(x, y) {
+          dom.style.left = x + 'px';
+          dom.style.top = y + 'px';
+        };
+        this.getDomLocation = function() {
+          return {
+            left: dom.offsetLeft,
+            top: dom.offsetTop
+          };
+        };
+        this.removeDom = function() {
+          var result = dom.parentNode.removeChild(dom);
+          console.log('removed: ', result);
+        };
+        this.start = function() {
+          dom.style.display = "block";
+        };
+        this.stop = function() {
+          dom.style.display = 'none';
+          this.direction = [false, false, false, false];
+        };
+      };
+      var Bullet = function (container, startPoint, v, speed) {
+        var dom = null;
+        var point = {};
+        var status = { RUNNING: false };
+
+        this.init = function() {
+          dom = document.createElement("div");
+          dom.className = "bullet";
+          dom.style.display = "none";
+          point = {
+            left: startPoint.left,
+            top: startPoint.top
+          };
+          dom.style.top = startPoint.left + "px";
+          dom.style.left = startPoint.top + "px";
+          container.appendChild(dom);
+        };
+        this.start = function() {
+          dom.style.display = "block";
+          status.RUNNING = true;
+        };
+        this.stop = function() {
+          dom.style.display = "none";
+          status.RUNNING = false;
+        };
+        this.update = function(time) {
+          if (status.RUNNING === false) {
+            return;
+          }
+          point.left += v.left * time * speed;
+          point.top += v.top * time * speed;
+          dom.style.left = point.left + 'px';
+          dom.style.top = point.top + 'px';
+          if (dom.offsetLeft > container.offsetWidth || dom.offsetLeft < -1 ||
+              dom.offsetTop > container.offsetHeight || dom.offsetTop < -1) {
+            this.out = true;
+          }
+        };
+        this.destroy = function() {
+          dom.parentNode.removeChild(dom);
+          dom = null;
+          return 1;
+        };
+
+        this.checkCollision = function(hero) {
+          // 두원의 중심점에x서 거리가 반지름보다 작으면 충돌
+          var halfOfDOM = dom.offsetWidth / 2;
+          var halfOfHero = hero.offsetWidth / 2;
+          var dist = distance(dom, hero);
+          return (halfOfDOM + halfOfHero) > dist;
+        };
+        this.init();
+      };
+      var Circle = function(canvas, speed, startDegree, endDegree, radius, pos) {
+        var dom = "";
+        var border = "";
+        this.out = false;
+
+
+        this.init = function() {
+          dom = document.createElement('div');
+          border = document.createElement('div');
+          dom.className = dom.className ? "bullet" : dom.className + " bullet";
+          this.out = false;
+
+          border.style.height = (radius * 2) + 'px';
+          border.style.width = (radius * 2) + 'px';
+          border.style.left = pos.x + 'px';
+          border.style.top = pos.y + 'px';
+          border.style.border = 'solid 1px red';
+          border.style.position = 'absolute';
+          border.style.borderRadius = radius + 'px';
+          border.style.display = 'none';
+          canvas.appendChild(dom);
+          canvas.appendChild(border);
+        };
+        this.update = function(time) {
+          if (dom.style.display === 'none') {
+            return;
+          }
+          startDegree += (speed * time);
+          var radian = startDegree * Math.PI / 180;
+          var x = pos.x + Math.cos(radian) * radius + radius;
+          var y = pos.y + Math.sin(radian) * radius + radius;
+          dom.style.left = x + 'px';
+          dom.style.top = y + 'px';
+
+          if (dom.offsetLeft > dom.parentNode.offsetWidth || dom.offsetLeft < -1 ||
+              dom.offsetTop > dom.parentNode.offsetHeight || dom.offsetTop < -1) {
+            this.out = true;
+            dom.style.display = 'none';
+          }
+        };
+        this.destroy = function() {
+          dom.parentNode.removeChild(dom);
+          border.parentNode.removeChild(border);
+          dom = null;
+          border = null;
+        };
+        this.checkCollision = function(hero) {
+          // 두원의 중심점에x서 거리가 반지름보다 작으면 충돌
+          var halfOfDOM = dom.offsetWidth / 2;
+          var halfOfHero = hero.offsetWidth / 2;
+          var dist = distance(dom, hero);
+          return (halfOfDOM + halfOfHero) > dist;
+        };
+        this.init();
+      }
+      function dtrX(degree) {
+        var radian = degree * Math.PI / 180;
+        return Math.cos(radian);
+      }
+      function dtrY(degree) {
+        var radian = degree * Math.PI / 180;
+        return Math.sin(radian);
+      }
+      var OctetCircle =function(container, speed, radius, pos) {
+        var circleList = [];
+        this.out = false;
+        circleList.push(new Circle(container, speed, 270, 360, radius, {x: pos.x, y: pos.y + radius}));
+        circleList.push(new Circle(container, speed, 225, 315, radius, {x: pos.x + dtrX(45) * radius, y: pos.y + dtrY(45) * radius}));
+        circleList.push(new Circle(container, speed, 180, 270, radius, {x: pos.x + radius, y: pos.y}));
+        circleList.push(new Circle(container, speed, 315, 405, radius, {x: pos.x + dtrX(135) * radius, y: pos.y + dtrY(135) * radius}));
+        circleList.push(new Circle(container, speed, 90, 180, radius, {x: pos.x, y: pos.y - radius}));
+        circleList.push(new Circle(container, speed, 45, 135, radius, {x: pos.x + dtrX(225) * radius, y: pos.y + dtrY(225) * radius}));
+        circleList.push(new Circle(container, speed, 0, 90, radius, {x: pos.x - radius, y: pos.y}));
+        circleList.push(new Circle(container, speed, 135, 225, radius, {x: pos.x + dtrX(315) * radius, y: pos.y + dtrY(315) * radius}));
+        this.update = function(time) {
+          for (var i = 0;  i < circleList.length; i++) {
+            circleList[i].update(time);
+          }
+          for (var i = 0;  i < circleList.length; i++) {
+            if (circleList[i].out === false) {
+              return;
+            }
+          }
+          this.out = true;
+        };
+        this.destroy = function() {
+          for (var i = 0;  i < circleList.length; i++) {
+            circleList[i].destroy();
+          }
+          return 8;
+        }
+        this.checkCollision = function(hero) {
+          for (var i = 0;  i < circleList.length; i++) {
+            if (circleList[i].checkCollision(hero) === true) {
+              return true;
+            }
+          }
+        };
+      }
+
+      window.onload = function() {
+        var status = {
+          RUNNING: false,
+          NO_BULLETS: 0,
+          lastSecond: (new Date()).getTime(),
+          startTime: (new Date()).getTime()
+        }
+        var heroObj = null;
+        var rivals = {};
+
+        var container = document.getElementsByClassName('container')[0];
+        var canvas = document.getElementsByClassName('canvas')[0];
+        var barometer = document.getElementsByClassName('barometer')[0];
+        var startText = document.getElementById('start');
+        var endText = document.getElementById('end');
+        var timeBoxNode = document.getElementById('timer');
+        var frameNode = document.getElementById('frame');
+        var timeDiffNode = document.getElementById('tdiff');
+        var pingNode = document.getElementById('ping');
+        var timeDifferNode = document.getElementById('timediffer');
+        var noBulletsNode = document.getElementById('nobullets');
+        var heroLocationNode = document.getElementById('info1');
+
+        var socket = io.connect();
+        socket.on('welcome world', function(world) {
+          canvas.style.width = world.canvasWidth + world.barometerWidth + 'px';
+          canvas.style.height = world.canvasHeight + 'px';
+          canvas.style.width = world.canvasWidth + 'px';
+          barometer.style.height = world.barometerHeight + 'px';
+          barometer.style.width = world.barometerWidth + 'px';
+          barometer.style.marginLeft = world.canvasWidth + 5 + 'px';
+          startText.style.top = (world.canvasHeight / 2 - startText.offsetHeight / 2 + 30) + 'px';
+          startText.style.left = world.canvasWidth / 2 - startText.offsetWidth / 2 + 'px';
+          endText.style.top = world.canvasHeight / 2 - endText.offsetHeight / 2 + 'px';
+          endText.style.left = world.canvasWidth / 2 - endText.offsetWidth / 2 + 'px';
+          endText.style.display = "none";
+          socket.emit('world complete');
+        });
+        socket.on('welcome user', function(newUser, otherUsers) {
+          console.log('you are:', newUser);
+          heroObj = new Hero(canvas, newUser, "me");
+
+          console.log('Other users: ', otherUsers);
+          for(var i in otherUsers) {
+            console.log('Other user ID: ', otherUsers[i].id);
+            rivals[otherUsers[i].id] = new Hero(canvas, otherUsers[i]);
+          }
+        });
+        socket.on('start game', function() {
+          status.RUNNING = true;
+          startText.style.display = "none";
+          endText.style.display = "none";
+          heroObj.start();
+          for(var i in rivals) {
+            rivals[i].start();
+          }
+          status.lastSecond = (new Date()).getTime();
+          status.startTime = (new Date()).getTime();
+          init();
+        });
+        socket.on('user connected', function(user) {
+          console.log('user ' + user.id + ' has connected with color ' + user.color);
+          rivals[user.id] = new Hero(canvas, user);
+          rivals[user.id].start();
+        });
+        socket.on('user end', function(user) {
+          console.log('game over user ' + user.id);
+          rivals[user.id].stop();
+        });
+        socket.on('user disconnected', function(userID) {
+          console.log('user disconnected ', userID);
+          rivals[userID].removeDom();
+          delete rivals[userID];
+        });
+        socket.on('user move start', function(user) {
+          rivals[user.id].setDirection(user.keyCode);
+          rivals[user.id].setDomLocation(user.posX, user.posY);
+        });
+        socket.on('user move end', function(user) {
+          rivals[user.id].releaseDirection(user.keyCode);
+          rivals[user.id].setDomLocation(user.posX, user.posY);
+        });
+        socket.on('generate target bullet', function(bullet) {
+          var target = null;
+          if (bullet.targetId === heroObj.id) {
+            target = heroObj;
+          } else {
+            target = rivals[bullet.targetId];
+          }
+          var source = { left: bullet.sourceX, top: bullet.sourceY };
+          var t = target.getDomLocation();
+          var bullet = new Bullet(canvas, source, vector(source, t), bullet.speed);
+          bullet.start();
+          bulletList.push(bullet);
+          status.NO_BULLETS += 1;
+        });
+        socket.on('generate octet circle bullet', function(bullet) {
+          var speed = bullet.speed;
+          var radius = bullet.radius;
+          var posX = bullet.x;
+          var posY = bullet.y;
+          bulletList.push(new OctetCircle(canvas, speed, radius, {x: posX , y: posY}));
+          status.NO_BULLETS += 8;
+        });
+        socket.on('pong', function(time) {
+          var now = (new Date()).getTime();
+          var ping = now - time.ct;
+          var stc = now - time.st;
+          pingNode.textContent = ping;
+          timeDifferNode.textContent = Math.abs(stc - time.cts - ping);
+        });
+
+
+
+
+        var keyPressed = [false, false, false, false];
+        document.onkeydown = function(e) {
+          if (status.RUNNING === false) {
+            if (e.keyCode === 32) {
+              socket.emit('request start', heroObj.id);
+              return true;
+            } else {
+              return false;
+            }
+          }
+          if (e.keyCode < 37 && e.keyCode > 40) {
+            return;
+          }
+          if ( keyPressed[e.keyCode - 37] === true ) {
+            return false;
+          }
+          keyPressed[e.keyCode - 37] = true;
+          heroObj.setDirection(e.keyCode);
+          socket.emit('user move start', {
+            id: heroObj.id,
+            posX: heroObj.dom.offsetLeft,
+            posY: heroObj.dom.offsetTop,
+            keyCode: e.keyCode,
+            timestamp: (new Date()).getTime()
+          });
+        }
+        document.onkeyup = function(e) {
+          if (status.RUNNING === false) {
+            return false;
+          }
+          if (e.keyCode < 37 && e.keyCode > 40) {
+            return;
+          }
+          keyPressed[e.keyCode - 37] = false;
+          heroObj.releaseDirection(e.keyCode);
+          heroObj.keyCode = e.keyCode;
+          socket.emit('user move end', {
+            id: heroObj.id,
+            posX: heroObj.dom.offsetLeft,
+            posY: heroObj.dom.offsetTop,
+            keyCode: e.keyCode,
+            timestamp: (new Date()).getTime()
+          });
+        };
+
+        // game loop
+
+        var bulletList = [];
+        var frame = 0;
+        var now, oldNow;
+
+        function clearAllBullets() {
+          for (var i = 0; i < bulletList.length; i++) {
+            bulletList[i].destroy();
+          }
+        }
+
+        function readjustmentWorld() {
+          status.RUNNING = false;
+          status.NO_BULLETS = 0;
+          endText.style.display = "block";
+          startText.style.display = "block";
+          socket.emit('end game', heroObj.id);
+          heroObj.stop();
+
+          for(var i in rivals) {
+            rivals[i].stop();
+          }
+          clearAllBullets();
+          bulletList = [];
+        }
+
+        var loop = function() {
+          frame++;
+          now = (new Date()).getTime();
+          var timeDiffLoop = now - oldNow;
+          timeBoxNode.textContent = now - status.startTime;
+          timeDiffNode.textContent = timeDiffLoop;
+          noBulletsNode.textContent = status.NO_BULLETS;
+          var difference = now - status.lastSecond;
+          if (difference > 1000) {
+            frameNode.textContent = frame;
+            frame = 0;
+            status.lastSecond = new Date();
+            socket.emit('ping', { timestamp: now });
+          }
+
+          // move rivals
+          for (var i in rivals) {
+            rivals[i].move(timeDiffLoop);
+          }
+
+          // move hero
+          heroObj.move(timeDiffLoop);
+          heroLocationNode.textContent = heroObj.dom.offsetLeft + ": " + heroObj.dom.offsetTop;
+
+          // move bullets
+          for (var i = 0; i < bulletList.length; i++) {
+            console.log(bulletList.length);
+            var bullet = bulletList[i];
+            if (bullet.checkCollision(heroObj.dom) === true) {
+              readjustmentWorld();
+              return;
+            }
+            if (bullet.out) {
+              var removeBullets = bullet.destroy();
+              status.NO_BULLETS -= removeBullets;
+              bulletList.splice(i, 1);
+            }
+            else bullet.update(timeDiffLoop);
+          }
+          oldNow = now;
+          if (status.RUNNING === true) {
+            window.requestAnimationFrame(loop, canvas);
+          }
+        };
+
+        var init = function() {
+          loop();
+        };
+
+      }
+    </script>
+  </head>
+  <body>
+    <div class="container">
+      <div class="canvas">
+        <div id="start">Press spacebar to start the game...</div>
+        <div id="end">Game end...</div>
+      </div>
+      <div class="barometer">
+        <label>time</label><div id="timer" class="box">000</div><label>millis</label><br>
+        <label>frame per second</label><div id="frame" class="box">000</div><br>
+        <label>time per loop</label><div id="tdiff" class="box">000</div><label>millis</label><br>
+        <label>round trip time</label><div id="ping" class="box">000</div><label>millis</label><br>
+        <label>error range server time</label><div id="timediffer" class="box">000</div><label>millis</label><br>
+        <label>number of bullets</label><div id="nobullets" class="box">000</div><br>
+        <label>hero location X:Y</label><div id="info1" class="box">000</div><br>
+      </div>
+    </div>
+  </body>
+</html>
